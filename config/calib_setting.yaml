@@ -1,0 +1,14 @@
+# 2D LiDAR - 카메라 캘리브레이션 세팅
+# Ros2 Foxy 
+
+scan_topic: /scan
+camera_number: 0
+
+target_object: apriltag # 지금은 apriltag만 가능
+
+cluster_type: dbscan
+cluster_topic: /clusters
+cluster_frame: laser
+max_distance: 4
+epsilon: 0.3
+min_samples: 4
