@@ -10,11 +10,12 @@ import cv2
 from threading import Thread, Lock
 import time  
 import numpy as np
-
+from datetime import datetime
 
 from CalibJ.utils.config_loader import load_config
 from CalibJ.utils.clustering_vis import points_to_pointcloud2
-from CalibJ.module.clustering_scan import dbscan_clustering, display_clusters
+from CalibJ.module.clustering_scan import save_execution_statistics, dbscan_clustering, display_clusters# , optics_clustering
+from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 
 
 class CalibrationNode(Node):
@@ -36,6 +37,13 @@ class CalibrationNode(Node):
         self.latest_camera_frame = None
         self.scan_lock = Lock()
         self.running = True
+
+
+        # 클러스터링 평가 결과 저장 관련 변수
+        self.evaluation_results = []  # 평가 결과 리스트
+        self.execution_times  = []
+        self.last_record_time = datetime.now()  # 마지막 기록 시간
+        self.saved = False  # 저장 여부
 
         # 카메라 초기화
         self.capture = cv2.VideoCapture(self.config.camera_number)
@@ -90,12 +98,20 @@ class CalibrationNode(Node):
 
     def process_synchronized_data(self, scan_data, camera_frame):
         """동기화된 데이터를 처리"""
-        self.get_logger().info("Processing synchronized data...")
+        # self.get_logger().info("Processing synchronized data...")
 
         # 스캔 데이터 클러스터링
-        labels, cluster_points = dbscan_clustering(
+        labels, cluster_points, execution_time = dbscan_clustering(
             scan_data, epsilon=self.config.epsilon, min_samples=self.config.min_samples
         )
+
+        # self.execution_times.append(execution_time)
+        # save_execution_statistics("optics", self.execution_times)
+        # score = evaluate_clustering(cluster_points, labels, c_type="optics")
+        # record_evaluation_result(score, self.last_record_time, self.evaluation_results, self.saved)
+
+
+
 
         # 클러스터링된 데이터를 PointCloud2 메시지로 변환 및 퍼블리시
         cluster_msg = points_to_pointcloud2(labels, cluster_points, frame_id=self.config.cluster_frame)
@@ -120,8 +136,9 @@ class CalibrationNode(Node):
 
         # 가장 가까운 장애물 거리 출력
         closest_range = min(scan_data.ranges)
-        self.get_logger().info(f"Closest object: {closest_range} meters")
+        # self.get_logger().info(f"Closest object: {closest_range} meters")
 
+    
 
     def destroy_node(self):
         """노드 종료 시 호출"""

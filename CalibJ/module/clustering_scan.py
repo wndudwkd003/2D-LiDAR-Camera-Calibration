@@ -1,6 +1,11 @@
 import numpy as np
-from sklearn.cluster import DBSCAN
 import cv2
+# from hdbscan import HDBSCAN
+import time
+import csv
+import os
+from datetime import datetime
+from sklearn.cluster import DBSCAN # , OPTICS
 
 
 def polar_to_cartesian(scan_data):
@@ -37,6 +42,78 @@ def polar_to_cartesian(scan_data):
     return rotated_points
 
 
+# from sklearn.cluster import MeanShift
+
+# def mean_shift_clustering(scan_data, bandwidth=None):
+#     points = polar_to_cartesian(scan_data)
+#     start_time = time.time()
+#     mean_shift = MeanShift(bandwidth=bandwidth)
+#     labels = mean_shift.fit_predict(points)
+#     execution_time = time.time() - start_time
+#     return labels, points, execution_time
+
+# from sklearn.cluster import AffinityPropagation
+
+# def affinity_propagation_clustering(scan_data, damping=0.9, preference=None):
+#     points = polar_to_cartesian(scan_data)
+#     start_time = time.time()
+#     affinity_propagation = AffinityPropagation(damping=damping, preference=preference)
+#     labels = affinity_propagation.fit_predict(points)
+#     execution_time = time.time() - start_time
+#     return labels, points, execution_time
+
+# def hdbscan_clustering(scan_data, min_samples=5, min_cluster_size=5):
+#     """
+#     HDBSCAN을 사용하여 스캔 데이터를 클러스터링.
+
+#     Args:
+#         scan_data (LaserScan): ROS2 LaserScan 메시지.
+#         min_samples (int): HDBSCAN의 최소 샘플 개수 (default: 5).
+#         min_cluster_size (int): 최소 클러스터 크기 (default: 5).
+
+#     Returns:
+#         labels (np.ndarray): 유효 데이터의 클러스터 레이블 (-1은 노이즈).
+#         cluster_points (np.ndarray): 유효 데이터의 클러스터링된 좌표.
+#         execution_time (float): 클러스터링 수행 시간.
+#     """
+#     points = polar_to_cartesian(scan_data)  # LaserScan 데이터를 데카르트 좌표로 변환
+
+#     # HDBSCAN 클러스터링 실행 및 시간 측정
+#     start_time = time.time()
+#     hdbscan = HDBSCAN(min_samples=min_samples, min_cluster_size=min_cluster_size)
+#     labels = hdbscan.fit_predict(points)
+#     execution_time = time.time() - start_time
+
+#     return labels, points, execution_time
+
+# def optics_clustering(scan_data, min_samples=5, max_eps=np.inf, cluster_method='xi', xi=0.1):
+#     """
+#     OPTICS를 사용하여 스캔 데이터를 클러스터링.
+
+#     Args:
+#         scan_data (LaserScan): ROS2 LaserScan 메시지.
+#         min_samples (int): OPTICS의 최소 샘플 개수.
+#         max_eps (float): OPTICS의 최대 반경 거리 (default: inf).
+#         cluster_method (str): 클러스터링 방법 ('xi' 또는 'dbscan', default: 'xi').
+#         xi (float): 클러스터링의 밀도 변화율 (default: 0.05).
+
+#     Returns:
+#         labels (np.ndarray): 유효 데이터의 클러스터 레이블 (-1은 노이즈).
+#         cluster_points (np.ndarray): 유효 데이터의 클러스터링된 좌표.
+#         execution_time (float): 클러스터링 수행 시간.
+#     """
+#     points = polar_to_cartesian(scan_data)  # LaserScan 데이터를 데카르트 좌표로 변환
+
+#     # OPTICS 클러스터링 실행 및 시간 측정
+#     start_time = time.time()
+#     optics = OPTICS(min_samples=min_samples, max_eps=max_eps, cluster_method=cluster_method, xi=xi)
+#     optics.fit(points)
+#     execution_time = time.time() - start_time
+#     labels = optics.labels_
+
+#     return labels, points, execution_time
+
+
 def dbscan_clustering(scan_data, epsilon=12, min_samples=5):
     """
     DBSCAN을 사용하여 스캔 데이터를 클러스터링.
@@ -49,15 +126,73 @@ def dbscan_clustering(scan_data, epsilon=12, min_samples=5):
     Returns:
         labels (np.ndarray): 유효 데이터의 클러스터 레이블 (-1은 노이즈).
         cluster_points (np.ndarray): 유효 데이터의 클러스터링된 좌표.
+        execution_time (float): 클러스터링 수행 시간.
     """
-    # LaserScan 데이터를 데카르트 좌표로 변환
-    points = polar_to_cartesian(scan_data)
+    points = polar_to_cartesian(scan_data)  # LaserScan 데이터를 데카르트 좌표로 변환
 
-    # DBSCAN 클러스터링 적용
+    # DBSCAN 클러스터링 실행 및 시간 측정
+    start_time = time.time()
     dbscan = DBSCAN(eps=epsilon, min_samples=min_samples)
     labels = dbscan.fit_predict(points)
+    execution_time = time.time() - start_time
 
-    return labels, points
+    return labels, points, execution_time
+
+
+def record_execution_time(algorithm_name, execution_time, execution_times):
+    """
+    클러스터링 실행 시간을 기록.
+
+    Args:
+        algorithm_name (str): 클러스터링 알고리즘 이름 ("DBSCAN" or "OPTICS").
+        execution_time (float): 클러스터링 수행 시간.
+        execution_times (list): 실행 시간 기록 리스트.
+
+    Returns:
+        None
+    """
+    execution_times.append(execution_time)
+    print(f"[{algorithm_name}] Execution Time: {execution_time:.4f} seconds")
+
+
+def save_execution_statistics(algorithm_name, execution_times):
+    """
+    실행 시간 통계를 CSV 파일로 저장.
+
+    Args:
+        algorithm_name (str): 클러스터링 알고리즘 이름 ("DBSCAN" or "OPTICS").
+        execution_times (list): 실행 시간 기록 리스트.
+
+    Returns:
+        None
+    """
+    if not execution_times:
+        print(f"No execution times recorded for {algorithm_name}.")
+        return
+
+    # 통계 계산
+    avg_time = sum(execution_times) / len(execution_times)
+    min_time = min(execution_times)
+    max_time = max(execution_times)
+
+    # CSV 파일에 저장
+    file_name = f"{algorithm_name}_execution_times.csv"
+    file_path = os.path.join(os.getcwd(), file_name)
+
+    with open(file_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["Timestamp", "Execution Time (s)"])
+        for exec_time in execution_times:
+            writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), exec_time])
+
+        # 통계 추가
+        writer.writerow([])
+        writer.writerow(["Statistics"])
+        writer.writerow(["Average Time", avg_time])
+        writer.writerow(["Minimum Time", min_time])
+        writer.writerow(["Maximum Time", max_time])
+
+    print(f"Execution statistics saved to {file_path}")
 
 def display_clusters(labels, cluster_points, max_distance=5, base_canvas_size=800, padding=50):
     """

@@ -10,5 +10,5 @@ cluster_type: dbscan
 cluster_topic: /clusters
 cluster_frame: laser
 max_distance: 4
-epsilon: 0.3
+epsilon: 0.1
 min_samples: 4
