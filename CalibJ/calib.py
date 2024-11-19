@@ -95,7 +95,7 @@ class CalibrationNode(Node):
 
         # Handle mouse click for cluster selection
         if self.click_x is not None and self.click_y is not None:
-            selected_id = self.cluster_tracker.select_tracked_id(self.click_x, self.click_y, selection_radius=5)
+            selected_id = self.cluster_tracker.select_tracked_id(self.click_x, self.click_y, selection_radius=100)
             if selected_id != -1:
                 self.get_logger().info(f"Selected cluster ID: {selected_id}")
                 tracked_center = self.cluster_tracker.get_tracked_center()

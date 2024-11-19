@@ -107,6 +107,7 @@ class ClusterTracker:
         selected_center = None  # 선택된 중심 좌표
 
         for cluster_id, center in self.cluster_centers.items():
+            print(f"{cluster_id} center: ", center)
             distance = np.linalg.norm(np.array(center) - np.array([click_x, click_y]))
             if distance < min_distance and distance <= selection_radius:
                 min_distance = distance
