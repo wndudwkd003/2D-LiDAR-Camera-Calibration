@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'calib = CalibJ.calib:main'
+            'calib = CalibJ.calib:main',
+            'camera_calib = CalibJ.camera_calibration:main'
         ],
     },
 )

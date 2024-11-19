@@ -12,10 +12,9 @@ import time
 import numpy as np
 from datetime import datetime
 from aprilgrid import Detector
-from CalibJ.utils.config_loader import load_config, load_json
+from CalibJ.utils.config_loader import load_config
 from CalibJ.utils.clustering_vis import points_to_pointcloud2
 from CalibJ.module.clustering_scan import save_execution_statistics, dbscan_clustering, display_clusters, world_to_pixel # , optics_clustering
-from CalibJ.module.calibration_module import calibration_2dlidar_camera
 from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
@@ -26,18 +25,14 @@ class CalibrationNode(Node):
         self.config = load_config()
         self.get_logger().info(f"Loaded configuration: {self.config}")
 
-        self.camera_params = load_json(self.config.cam_calib_result_json)
-
         # ROS 2 Subscribers and Publishers
         self.scan_sub = self.create_subscription(LaserScan, self.config.scan_topic, self.scan_callback, 10)
-        self.cluster_pub = self.create_publisher(PointCloud2, self.config.cluster_topic, 10)
 
         # Data Management
         self.latest_scan = None
         self.latest_camera_frame = None
         self.scan_lock = Lock()
         self.running = True
-        self.lidar_features = []
 
         # AprilTag Detector and Tracker
         self.detector = Detector("t36h11")
@@ -94,10 +89,6 @@ class CalibrationNode(Node):
             scan_data, epsilon=self.config.epsilon, min_samples=self.config.min_samples
         )
 
-        # rviz 시각화용
-        # cluster_msg = points_to_pointcloud2(labels, cluster_points, frame_id=self.config.cluster_frame)
-        # self.cluster_pub.publish(cluster_msg)
-
         pix_labels, pix_cluster_points = world_to_pixel(labels, cluster_points, max_distance=self.config.max_distance,)
 
         # update cluster center positions
@@ -123,11 +114,10 @@ class CalibrationNode(Node):
 
         # Visualization preparation
         self.cluster_canvas = display_clusters(
-            pix_labels,
-            pix_cluster_points,
-            canvas_size=800,
-            tracked_center=self.cluster_tracker.tracked_center,  # 중심 좌표 전달
-            only_clustering=False
+        pix_labels,
+        pix_cluster_points,
+        canvas_size=800,
+        tracked_center=self.cluster_tracker.tracked_center  # 중심 좌표 전달
         )
 
         self.camera_frame = camera_frame
@@ -138,32 +128,18 @@ class CalibrationNode(Node):
             try:
                 # Resize and combine frames for display
                 detect_frame = self.camera_frame
-
+                
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # Quit
                     self.destroy_node()
                     rclpy.shutdown()
-
                 elif key == ord('a'):  # Detect AprilTag
                     self.get_logger().info("Key 'a' pressed: Detecting AprilTag")
                     _ = detect_apriltag(self.detector, detect_frame)
-
-                elif key == ord('y'):  # Process both LiDAR and AprilTag coordinates
-                    self.get_logger().info("Key 'y' pressed: Processing LiDAR and AprilTag coordinates")
-                    result = self.process_combined_coordinates(detect_frame, divide_num=10)
-                    if not result:
-                        print("AprilTag의 좌표가 맞지 않습니다. 6개가 나와야함.")
-
-                elif key == ord('c'):  # 개수 세기용
-                    self.get_logger().info(f"Key 'c' pressed: lidar_features -> {len(set(self.lidar_features))}, apriltag_features -> {len(set(self.apriltag_features))}.")
-
-                elif key == ord('z'): # 캘리브레이션 진행
-                    lidar_features = list(set(self.lidar_features))
-                    apriltag_features = list(set(self.apriltag_features))
-                    print(f"lidar_features: {len(lidar_features)}, apriltag_features: {len(apriltag_features)}")
-
-                    # 캘리브레이션 외부행렬 추정
-                    success, rvec, tvec, extrinsic = calibration_2dlidar_camera(lidar_features, apriltag_features, self.camera_params.camera_matrix, self.camera_params.dist_coeffs)
+                elif key == ord('y'):  # Add AprilTag features
+                    self.get_logger().info("Key 'y' pressed: Adding AprilTag features")
+                    new_features = detect_apriltag(self.detector, detect_frame)
+                    self.apriltag_features.extend(new_features)
 
                 camera_frame_resized = cv2.resize(detect_frame, (self.cluster_canvas.shape[1], self.cluster_canvas.shape[0]))
                 combined_canvas = np.hstack((camera_frame_resized, self.cluster_canvas))
@@ -173,40 +149,6 @@ class CalibrationNode(Node):
 
             except Exception as e:
                 self.get_logger().error(f"Failed to display combined image: {e}")
-
-    def process_combined_coordinates(self, frame, divide_num=10):
-        """
-        LiDAR와 AprilTag 좌표를 처리하여 각각 직선을 추정하고 일정 간격으로 나눕니다.
-
-        Args:
-            frame (np.ndarray): 카메라 프레임.
-            divide_num (int): 직선을 나눌 구간 수.
-        """
-
-        # 1. AprilTag 데이터 처리
-        apriltag_positions = detect_apriltag(self.detector, frame)
-        if len(apriltag_positions) == 6:
-            apriltag_line = self.estimate_line(apriltag_positions)
-            apriltag_divided_points = self.divide_line(apriltag_line, divide_num)
-            self.get_logger().info(f"AprilTag line divided into {len(apriltag_divided_points)} points.")
-            self.apriltag_features.extend(apriltag_divided_points)
-        else:
-            return False
-
-
-        # 2. LiDAR 데이터 처리
-        if self.cluster_tracker.tracked_center is None:
-            self.get_logger().warn("No cluster is being tracked!")
-        else:
-            tracked_points = list(self.cluster_tracker.cluster_centers.values())
-            if len(tracked_points) > 1:
-                lidar_line = self.estimate_line(tracked_points)
-                lidar_divided_points = self.divide_line(lidar_line, divide_num)
-                self.get_logger().info(f"LiDAR line divided into {len(lidar_divided_points)} points.")
-                self.lidar_features.extend(lidar_divided_points)
-
-        return True
-        
 
 
     def on_mouse_click(self, event, x, y, flags, param):

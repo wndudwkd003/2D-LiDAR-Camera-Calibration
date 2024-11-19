@@ -10,5 +10,8 @@ cluster_type: dbscan
 cluster_topic: /clusters
 cluster_frame: laser
 max_distance: 4
-epsilon: 0.035
-min_samples: 5
+epsilon: 0.036
+min_samples: 4
+
+result_path: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results
+cam_calib_result_json: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results/calibration_result.json

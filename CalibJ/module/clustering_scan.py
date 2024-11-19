@@ -369,8 +369,10 @@ def world_to_pixel(labels, world_points, max_distance, canvas_size=800, padding=
 #                 )
 
 #     return canvas
+
+
 def display_clusters(
-    labels, cluster_points, canvas_size=800, tracked_center=None
+    labels, cluster_points, canvas_size=800, tracked_center=None, only_clustering=False
 ):
     """
     클러스터링된 점들을 시각화하는 함수.
@@ -379,9 +381,8 @@ def display_clusters(
         labels (np.ndarray): 클러스터 라벨.
         cluster_points (np.ndarray): 픽셀 좌표계 점들의 배열.
         canvas_size (int, optional): 캔버스의 크기 (정사각형 기준). 기본값은 800.
-        color_vis (bool, optional): True면 클러스터별 색상, False면 전부 흰색. 기본값은 True.
-        only_tracking (bool, optional): True면 추적 중인 클러스터를 강조. 기본값은 False.
         tracked_center (tuple, optional): 추적 중인 클러스터의 중심 좌표. 기본값은 None.
+        only_clustering (bool, optional): True면 클러스터링에 따라 색상을 설정하고 추적 강조를 비활성화.
 
     Returns:
         np.ndarray: 시각화를 위한 캔버스 이미지.
@@ -391,6 +392,10 @@ def display_clusters(
     if len(cluster_points) > 0:
         unique_labels = np.unique(labels)
 
+        # 클러스터 색상 생성
+        if only_clustering:
+            colors = generate_colors(len(unique_labels))  # 클러스터링별 색상
+
         for label in unique_labels:
             label_indices = (labels == label)
             cluster_points_label = cluster_points[label_indices]
@@ -399,25 +404,35 @@ def display_clusters(
             cluster_center = np.mean(cluster_points_label, axis=0)
             center_x, center_y = int(cluster_center[0]), int(cluster_center[1])
 
-            # 추적 중인 클러스터 여부 확인
-            is_tracked_cluster = (
-                tracked_center is not None and
-                np.linalg.norm(np.array(cluster_center) - np.array(tracked_center)) < 1e-5
-            )
+            if only_clustering:  # 클러스터링 모드
+                if label == -1:  # 이상치
+                    point_color = (128, 128, 128)  # 회색
+                    center_color = None
+                    id_color = None
+                else:
+                    point_color = colors[label]  # 클러스터별 색상
+                    center_color = (0, 255, 0)  # 초록색
+                    id_color = (0, 255, 0)  # 초록색
+            else:  # 추적 강조 모드
+                # 추적 중인 클러스터 여부 확인
+                is_tracked_cluster = (
+                    tracked_center is not None and
+                    np.linalg.norm(np.array(cluster_center) - np.array(tracked_center)) < 1e-5
+                )
 
-            # 색상 설정
-            if label == -1:  # 이상치
-                point_color = (128, 128, 128)  # 회색
-                center_color = None
-                id_color = None
-            elif is_tracked_cluster:  # 추적 중인 클러스터
-                point_color = (255, 0, 0)  # 파란색
-                center_color = (0, 0, 255)  # 빨간색
-                id_color = (0, 0, 255)  # 빨간색
-            else:  # 다른 클러스터
-                point_color = (255, 255, 255)  # 흰색
-                center_color = (0, 255, 0)  # 초록색
-                id_color = (0, 255, 0)  # 초록색
+                # 색상 설정
+                if label == -1:  # 이상치
+                    point_color = (128, 128, 128)  # 회색
+                    center_color = None
+                    id_color = None
+                elif is_tracked_cluster:  # 추적 중인 클러스터
+                    point_color = (255, 0, 0)  # 파란색
+                    center_color = (0, 0, 255)  # 빨간색
+                    id_color = (0, 0, 255)  # 빨간색
+                else:  # 다른 클러스터
+                    point_color = (255, 255, 255)  # 흰색
+                    center_color = (0, 255, 0)  # 초록색
+                    id_color = (0, 255, 0)  # 초록색
 
             # 클러스터 점 그리기
             for point in cluster_points_label:
@@ -443,6 +458,7 @@ def display_clusters(
                 )
 
     return canvas
+
 
 
 
