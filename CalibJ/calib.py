@@ -11,156 +11,183 @@ from threading import Thread, Lock
 import time  
 import numpy as np
 from datetime import datetime
-
+from aprilgrid import Detector
 from CalibJ.utils.config_loader import load_config
 from CalibJ.utils.clustering_vis import points_to_pointcloud2
 from CalibJ.module.clustering_scan import save_execution_statistics, dbscan_clustering, display_clusters# , optics_clustering
+from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
-
+from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
 
 class CalibrationNode(Node):
     def __init__(self):
-        super().__init__('calibration_node')  # 노드 이름 설정
+        super().__init__('calibration_node')
 
         self.config = load_config()
         self.get_logger().info(f"Loaded configuration: {self.config}")
 
-        # 토픽 구독
+        # ROS 2 Subscribers and Publishers
         self.scan_sub = self.create_subscription(LaserScan, self.config.scan_topic, self.scan_callback, 10)
 
-
-        # 토픽 발행
-        self.cluster_pub = self.create_publisher(PointCloud2, self.config.cluster_topic, 10)
-
-        # 스캔 데이터 및 카메라 데이터 관리
+        # Data Management
         self.latest_scan = None
         self.latest_camera_frame = None
         self.scan_lock = Lock()
         self.running = True
 
+        # AprilTag Detector and Tracker
+        self.detector = Detector("t36h11")
+        self.apriltag_features = []
+        self.cluster_tracker = ClusterTracker()
 
-        # 클러스터링 평가 결과 저장 관련 변수
-        self.evaluation_results = []  # 평가 결과 리스트
-        self.execution_times  = []
-        self.last_record_time = datetime.now()  # 마지막 기록 시간
-        self.saved = False  # 저장 여부
+        # Mouse Interaction
+        self.click_x = None
+        self.click_y = None
+        cv2.namedWindow("Camera and Clusters")
+        cv2.setMouseCallback("Camera and Clusters", self.on_mouse_click)
 
-        # 카메라 초기화
+        # Camera Initialization
         self.capture = cv2.VideoCapture(self.config.camera_number)
         if not self.capture.isOpened():
             self.get_logger().error("Failed to open the camera!")
             raise RuntimeError("Camera initialization failed")
 
-        # 카메라 데이터 수집 스레드 시작
-        self.camera_thread = Thread(target=self.camera_loop, daemon=True)
-        self.camera_thread.start()
+        # ROS 2 Timers for main thread processing
+        self.create_timer(0.1, self.camera_loop)  # 100ms interval
+        self.create_timer(0.1, self.process_data_loop)  # 100ms interval
+        self.create_timer(0.1, self.show_visualization)  # 100ms interval for GUI
 
-        # 데이터 동기화 및 처리 스레드
-        self.processing_thread = Thread(target=self.process_data_loop, daemon=True)
-        self.processing_thread.start()
-
-        self.get_logger().info("All modules are ready.")  # 시작 시 로그 출력
+        self.get_logger().info("All modules are ready.")
 
     def scan_callback(self, msg):
-        """스캔 데이터 콜백 함수"""
+        """Callback for LaserScan topic."""
         with self.scan_lock:
             self.latest_scan = {'timestamp': time.time(), 'data': msg}
-            # self.get_logger().info(f"Scan received: {len(msg.ranges)} ranges")
 
     def camera_loop(self):
-        """카메라 데이터를 주기적으로 가져오는 루프"""
-        while self.running:
-            ret, frame = self.capture.read()
-            if not ret:
-                self.get_logger().error("Failed to capture frame from the camera!")
-                break
-
-            # 카메라 데이터 저장
+        """Periodic camera frame capture."""
+        ret, frame = self.capture.read()
+        if ret:
             self.latest_camera_frame = {'timestamp': time.time(), 'frame': frame}
+        else:
+            self.get_logger().error("Failed to capture frame from the camera!")
 
     def process_data_loop(self):
-        """스캔 데이터와 카메라 데이터 동기화 및 처리"""
-        while self.running:
-            with self.scan_lock:
-                if self.latest_scan and self.latest_camera_frame:
-                    scan_time = self.latest_scan['timestamp']
-                    camera_time = self.latest_camera_frame['timestamp']
+        """Synchronize and process data."""
+        with self.scan_lock:
+            if self.latest_scan and self.latest_camera_frame:
+                scan_time = self.latest_scan['timestamp']
+                camera_time = self.latest_camera_frame['timestamp']
 
-                    # 시간 동기화: 300ms 이내인 경우 처리
-                    if abs(scan_time - camera_time) < 0.3:
-                        scan_data = self.latest_scan['data']
-                        camera_frame = self.latest_camera_frame['frame']
-
-                        # 동기화된 데이터 처리
-                        self.process_synchronized_data(scan_data, camera_frame)
-
-            time.sleep(0.05)  # 처리 루프 주기
+                if abs(scan_time - camera_time) < 0.3:  # Synchronization threshold
+                    scan_data = self.latest_scan['data']
+                    camera_frame = self.latest_camera_frame['frame']
+                    self.process_synchronized_data(scan_data, camera_frame)
 
     def process_synchronized_data(self, scan_data, camera_frame):
-        """동기화된 데이터를 처리"""
-        # self.get_logger().info("Processing synchronized data...")
-
-        # 스캔 데이터 클러스터링
-        labels, cluster_points, execution_time = dbscan_clustering(
+        """Process synchronized scan and camera data."""
+        labels, cluster_points, _ = dbscan_clustering(
             scan_data, epsilon=self.config.epsilon, min_samples=self.config.min_samples
         )
 
-        # self.execution_times.append(execution_time)
-        # save_execution_statistics("optics", self.execution_times)
-        # score = evaluate_clustering(cluster_points, labels, c_type="optics")
-        # record_evaluation_result(score, self.last_record_time, self.evaluation_results, self.saved)
+        # update cluster center positions
+        self.cluster_tracker.update_clusters(labels, cluster_points)
+
+        # Handle mouse click for cluster selection
+        if self.click_x is not None and self.click_y is not None:
+            selected_id = self.cluster_tracker.select_tracked_id(self.click_x, self.click_y, selection_radius=5)
+            if selected_id != -1:
+                self.get_logger().info(f"Selected cluster ID: {selected_id}")
+                tracked_center = self.cluster_tracker.get_tracked_center()
+                if tracked_center:
+                    self.cluster_tracker.initialize_kalman_filter(tracked_center)
+            self.click_x = None
+            self.click_y = None
+
+        # Kalman filter tracking
+        if self.cluster_tracker.is_tracking:
+            predicted_position = self.cluster_tracker.track()
+            # if predicted_position is not None:
+                # self.get_logger().info(f"Tracking cluster at {predicted_position}")
+
+        # Visualization preparation
+        self.cluster_canvas = display_clusters(
+            labels,
+            cluster_points,
+            max_distance=self.config.max_distance,
+            color_vis=False,
+            only_tracking=True,
+            tracked_id=self.cluster_tracker.tracked_id
+        )
+        self.camera_frame = camera_frame
+
+    def show_visualization(self):
+        """Main thread OpenCV GUI rendering."""
+        if hasattr(self, 'cluster_canvas') and self.camera_frame is not None:
+            try:
+                # Resize and combine frames for display
+                detect_frame = self.camera_frame
+                
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):  # Quit
+                    self.destroy_node()
+                    rclpy.shutdown()
+                elif key == ord('a'):  # Detect AprilTag
+                    self.get_logger().info("Key 'a' pressed: Detecting AprilTag")
+                    _ = detect_apriltag(self.detector, detect_frame)
+                elif key == ord('y'):  # Add AprilTag features
+                    self.get_logger().info("Key 'y' pressed: Adding AprilTag features")
+                    new_features = detect_apriltag(self.detector, detect_frame)
+                    self.apriltag_features.extend(new_features)
+
+                camera_frame_resized = cv2.resize(detect_frame, (self.cluster_canvas.shape[1], self.cluster_canvas.shape[0]))
+                combined_canvas = np.hstack((camera_frame_resized, self.cluster_canvas))
+
+                # Show combined canvas
+                cv2.imshow("Camera and Clusters", combined_canvas)
+
+            except Exception as e:
+                self.get_logger().error(f"Failed to display combined image: {e}")
 
 
+    def on_mouse_click(self, event, x, y, flags, param):
+        """Handle mouse click events."""
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # 왼쪽 카메라 창 너비 계산
+            camera_width = self.cluster_canvas.shape[1]
 
-
-        # 클러스터링된 데이터를 PointCloud2 메시지로 변환 및 퍼블리시
-        cluster_msg = points_to_pointcloud2(labels, cluster_points, frame_id=self.config.cluster_frame)
-        self.cluster_pub.publish(cluster_msg)
-
-        # 클러스터링 결과를 시각화 이미지로 생성
-        cluster_canvas = display_clusters(labels, cluster_points, max_distance=self.config.max_distance)
-
-        # 두 이미지를 병합 (카메라 프레임 왼쪽, 클러스터 결과 오른쪽)
-        try:
-            # 카메라 프레임 크기와 클러스터 캔버스 크기 맞추기
-            camera_frame_resized = cv2.resize(camera_frame, (cluster_canvas.shape[1], cluster_canvas.shape[0]))
-
-            # 두 이미지를 수평으로 병합
-            combined_canvas = np.hstack((camera_frame_resized, cluster_canvas))
-
-            # OpenCV 윈도우로 표시
-            cv2.imshow('Camera and Clusters', combined_canvas)
-            cv2.waitKey(1)  # 1ms 대기
-        except Exception as e:
-            self.get_logger().error(f"Failed to display combined image: {e}")
-
-        # 가장 가까운 장애물 거리 출력
-        closest_range = min(scan_data.ranges)
-        # self.get_logger().info(f"Closest object: {closest_range} meters")
-
-    
+            if x < camera_width:
+                # 카메라 창에서 클릭
+                self.get_logger().info(f"Mouse clicked in Camera window at ({x}, {y})")
+                self.click_x = x
+                self.click_y = y
+                # 필요한 경우 카메라 관련 추가 로직 작성 가능
+            else:
+                # LiDAR 창에서 클릭 (좌표 변환)
+                lidar_x = x - camera_width
+                self.get_logger().info(f"Mouse clicked in LiDAR window at ({lidar_x}, {y})")
+                self.click_x = lidar_x
+                self.click_y = y
 
     def destroy_node(self):
-        """노드 종료 시 호출"""
+        """Cleanup on shutdown."""
         self.running = False
-        self.camera_thread.join()  # 스레드 종료 대기
-        self.processing_thread.join()
-        self.capture.release()  # 카메라 자원 해제
+        self.capture.release()
         cv2.destroyAllWindows()
         super().destroy_node()
 
 
 def main(args=None):
-    rclpy.init(args=args)  # ROS 2 초기화
-    node = CalibrationNode()  # 노드 객체 생성
-
+    rclpy.init(args=args)
+    node = CalibrationNode()
     try:
-        rclpy.spin(node)  # 노드 실행
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        pass  # Ctrl+C로 종료 시 예외 처리
+        pass
     finally:
-        node.destroy_node()  # 노드 정리
-        rclpy.shutdown()  # ROS 2 종료
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 
 if __name__ == '__main__':
