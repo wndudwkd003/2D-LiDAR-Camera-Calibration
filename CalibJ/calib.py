@@ -14,7 +14,7 @@ from datetime import datetime
 from aprilgrid import Detector
 from CalibJ.utils.config_loader import load_config
 from CalibJ.utils.clustering_vis import points_to_pointcloud2
-from CalibJ.module.clustering_scan import save_execution_statistics, dbscan_clustering, display_clusters# , optics_clustering
+from CalibJ.module.clustering_scan import save_execution_statistics, dbscan_clustering, display_clusters, world_to_pixel # , optics_clustering
 from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
@@ -22,7 +22,6 @@ from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
 class CalibrationNode(Node):
     def __init__(self):
         super().__init__('calibration_node')
-
         self.config = load_config()
         self.get_logger().info(f"Loaded configuration: {self.config}")
 
@@ -90,35 +89,37 @@ class CalibrationNode(Node):
             scan_data, epsilon=self.config.epsilon, min_samples=self.config.min_samples
         )
 
-        # update cluster center positions
-        self.cluster_tracker.update_clusters(labels, cluster_points)
+        pix_labels, pix_cluster_points = world_to_pixel(labels, cluster_points, max_distance=self.config.max_distance,)
 
-        # Handle mouse click for cluster selection
+        # update cluster center positions
+        self.cluster_tracker.update_clusters(pix_labels, pix_cluster_points)
+
+
+        # 마우스 클릭으로 중심 좌표 추적 시작
         if self.click_x is not None and self.click_y is not None:
-            selected_id = self.cluster_tracker.select_tracked_id(self.click_x, self.click_y, selection_radius=100)
-            if selected_id != -1:
-                self.get_logger().info(f"Selected cluster ID: {selected_id}")
-                tracked_center = self.cluster_tracker.get_tracked_center()
-                if tracked_center:
-                    self.cluster_tracker.initialize_kalman_filter(tracked_center)
+            selected_center = self.cluster_tracker.select_tracked_center(self.click_x, self.click_y, selection_radius=100)
+            if selected_center:
+                pass
+                # self.get_logger().info(f"Tracking cluster center at: {selected_center}")
             self.click_x = None
             self.click_y = None
 
-        # Kalman filter tracking
+        # 칼만 필터 추적
         if self.cluster_tracker.is_tracking:
             predicted_position = self.cluster_tracker.track()
-            # if predicted_position is not None:
-                # self.get_logger().info(f"Tracking cluster at {predicted_position}")
+            if predicted_position is not None:
+                pass
+                # self.get_logger().info(f"Tracking predicted position: {predicted_position}")
+
 
         # Visualization preparation
         self.cluster_canvas = display_clusters(
-            labels,
-            cluster_points,
-            max_distance=self.config.max_distance,
-            color_vis=False,
-            only_tracking=True,
-            tracked_id=self.cluster_tracker.tracked_id
+        pix_labels,
+        pix_cluster_points,
+        canvas_size=800,
+        tracked_center=self.cluster_tracker.tracked_center  # 중심 좌표 전달
         )
+
         self.camera_frame = camera_frame
 
     def show_visualization(self):

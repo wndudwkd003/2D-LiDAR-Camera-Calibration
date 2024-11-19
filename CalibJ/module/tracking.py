@@ -31,7 +31,7 @@ class ClusterTracker:
         클러스터 및 추적 정보를 관리하는 클래스.
         """
         self.cluster_centers = {}  # {클러스터 ID: 중심 좌표}
-        self.tracked_id = None  # 추적 중인 클러스터 ID
+        self.tracked_center = None  # 추적 중인 클러스터 중심 좌표
         self.kalman_filter = None  # 칼만 필터 객체
         self.is_tracking = False  # 추적 상태 초기화
 
@@ -57,14 +57,8 @@ class ClusterTracker:
         self.kalman_filter.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1e-1
         self.kalman_filter.statePost = np.array([initial_position[0], initial_position[1], 0, 0], dtype=np.float32)
 
+        self.tracked_center = initial_position  # 추적할 중심 좌표 저장
         self.is_tracking = True  # 추적 활성화
-
-    def stop_tracking(self):
-        """
-        추적을 비활성화합니다.
-        """
-        self.is_tracking = False
-        self.kalman_filter = None
 
     def track(self):
         """
@@ -90,9 +84,22 @@ class ClusterTracker:
         """
         self.cluster_centers = calculate_cluster_centers(labels, points)
 
-    def select_tracked_id(self, click_x, click_y, selection_radius=50):
+        if self.is_tracking and self.tracked_center is not None:
+            # 추적 중인 중심과 클러스터 중심 비교
+            distances = {
+                cluster_id: np.linalg.norm(np.array(center) - np.array(self.tracked_center))
+                for cluster_id, center in self.cluster_centers.items()
+            }
+
+            # 가장 가까운 중심 선택 (추적 유지)
+            closest_id, closest_distance = min(distances.items(), key=lambda x: x[1])
+            if closest_distance < 50:  # 거리 임계값
+                self.tracked_center = self.cluster_centers[closest_id]
+                self.kalman_filter.correct(np.array(self.tracked_center, dtype=np.float32))
+
+    def select_tracked_center(self, click_x, click_y, selection_radius=50):
         """
-        클릭된 위치와 가장 가까운 클러스터 ID를 추적 ID로 설정.
+        클릭된 위치와 가장 가까운 클러스터 중심을 추적 대상으로 설정.
 
         Args:
             click_x (float): 클릭한 x 좌표.
@@ -100,29 +107,22 @@ class ClusterTracker:
             selection_radius (float): 선택 가능한 반경.
 
         Returns:
-            int: 선택된 클러스터 ID (-1은 실패).
+            tuple: 선택된 중심 좌표 (x, y), 없으면 None.
         """
         min_distance = float('inf')
-        selected_id = -1
-        selected_center = None  # 선택된 중심 좌표
+        selected_center = None
 
-        for cluster_id, center in self.cluster_centers.items():
-            print(f"{cluster_id} center: ", center)
+        for center in self.cluster_centers.values():
             distance = np.linalg.norm(np.array(center) - np.array([click_x, click_y]))
             if distance < min_distance and distance <= selection_radius:
                 min_distance = distance
-                selected_id = cluster_id
-                selected_center = center  # 선택된 중심 좌표 저장
+                selected_center = center
 
-        self.tracked_id = selected_id
+        if selected_center is not None:
+            self.initialize_kalman_filter(selected_center)
 
-        if selected_id != -1:
-            # 선택된 ID와 중심 좌표 출력
-            print(f"Selected Cluster ID: {selected_id}, Center: {selected_center}")
-        else:
-            print("No cluster selected within the radius.")
+        return selected_center
 
-        return selected_id
 
 
     def get_tracked_center(self):
