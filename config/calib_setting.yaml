@@ -15,3 +15,13 @@ min_samples: 4
 
 result_path: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results
 cam_calib_result_json: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results/calibration_result.json
+
+
+ex_calib_result_json: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results/calibration_extrinsic.json
+
+
+divide_num: 18
+add_num: 3
+
+
+vis_distance: True

@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'calib = CalibJ.calib:main',
-            'camera_calib = CalibJ.camera_calibration:main'
+            'camera_calib = CalibJ.camera_calibration:main',
+            'viscam = CalibJ.viscam:main'
         ],
     },
 )

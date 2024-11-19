@@ -31,6 +31,8 @@ def detect_apriltag(detector, frame):
 
         cv2.circle(frame, tag_center, 3, (0, 0, 255), 1)
 
-        if tag_id in [6, 7, 8, 9, 10, 11]:
+        if tag_id in [24, 25, 26, 27, 28, 29]:
             april_2d_positions.append((tag_id, corner_01, corner_02))   # 태그의 좌, 우 하단의 모서리 좌표 추가
+
+    return april_2d_positions
     

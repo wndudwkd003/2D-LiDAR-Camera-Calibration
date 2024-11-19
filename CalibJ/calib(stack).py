@@ -44,7 +44,6 @@ class CalibrationNode(Node):
         self.apriltag_features = []
         self.cluster_tracker = ClusterTracker()
 
-        self.vis_distance = self.config.vis_distance 
 
         self.pix_cluster_points = None
 
@@ -103,7 +102,6 @@ class CalibrationNode(Node):
         # self.cluster_pub.publish(cluster_msg)
 
         pix_labels, pix_cluster_points = world_to_pixel(labels, cluster_points, max_distance=self.config.max_distance)
- 
         self.pix_cluster_points = pix_cluster_points
 
         # update cluster center positions
@@ -147,41 +145,25 @@ class CalibrationNode(Node):
                 # LiDAR 데이터를 카메라 프레임에 투영
                 if hasattr(self, 'extrinsic_matrix') and len(self.lidar_features) > 0:
                     lidar_points = np.array(self.pix_cluster_points)  # LiDAR 좌표 가져오기
+
+                    # LiDAR x 좌표를 카메라 프레임 기준으로 이동
+                    lidar_window_offset = self.cluster_canvas.shape[1]  # LiDAR 창 너비
+                    lidar_points[:, 0] -= lidar_window_offset
+
+                    print("Transformed lidar_points: ", lidar_points)  # 변환된 LiDAR 좌표 출력
+
+
                     projected_points = self.project_lidar_to_image(
                         lidar_points,
                         self.camera_params.camera_matrix,
                         self.camera_params.dist_coeffs,
-                        self.rvec,
-                        self.tvec
+                        self.extrinsic_matrix
                     )
 
-                    # 거리를 기반으로 색상 계산
-                    if self.vis_distance:
-                        # 거리를 계산 (유클리드 거리)
-                        distances = np.linalg.norm(lidar_points[:, :2], axis=1)
-                        max_distance = np.max(distances)  # 정규화를 위해 최대 거리 계산
-
                     # 투영된 점을 카메라 프레임 위에 그리기
-                    for idx, point in enumerate(projected_points):
-                        try:
-                            x, y = map(lambda v: int(round(v)), point)
-
-                            if 0 <= x < 800 and 0 <= y < 800:  # 프레임 경계 확인
-                                if self.vis_distance:
-                                    # 정규화된 거리를 색상으로 매핑 (빨간색 -> 보라색)
-                                    norm_dist = distances[idx] / max_distance
-                                    r = int(255 * norm_dist)
-                                    g = 0
-                                    b = int(255 * (1 - norm_dist))
-                                    color = (b, g, r)
-                                else:
-                                    # 초록색
-                                    color = (0, 255, 0)
-
-                                cv2.circle(detect_frame, (x, y), 3, color, -1)
-                        except ValueError as e:
-                            print(f"ValueError converting point: {point} | Error: {e}")
-                            continue
+                    for point in projected_points:
+                        x, y = int(point[0]), int(point[1])
+                        cv2.circle(detect_frame, (x, y), 3, (0, 255, 0), -1)  # 초록색 점으로 표시
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # Quit
@@ -213,8 +195,6 @@ class CalibrationNode(Node):
                     )
 
                     if success:
-                        self.rvec = rvec
-                        self.tvec = tvec
                         self.extrinsic_matrix = extrinsic  # 외부행렬 저장
                         self.get_logger().info("Calibration successful. Saving extrinsic matrix.")
                         self.save_extrinsic_to_json(extrinsic)
@@ -230,7 +210,7 @@ class CalibrationNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Failed to display combined image: {e}")
 
-    def project_lidar_to_image(self, lidar_points, camera_matrix, dist_coeffs, rvec, tvec):
+    def project_lidar_to_image(self, lidar_points, camera_matrix, dist_coeffs, extrinsic_matrix):
         """
         LiDAR 데이터를 카메라 프레임으로 투영합니다.
 
@@ -247,21 +227,22 @@ class CalibrationNode(Node):
         if lidar_points.shape[1] == 2:
             lidar_points = np.hstack((lidar_points, np.zeros((lidar_points.shape[0], 1))))  # Z = 0 추가
 
-        # 외부행렬 분리 (회전 및 변환)
-        rotation_matrix = rvec
-        translation_vector = tvec
+        # LiDAR 점들을 동차 좌표로 변환
+        lidar_homogeneous = np.hstack((lidar_points, np.ones((lidar_points.shape[0], 1))))  # Homogeneous coordinates 추가
 
-        # cv2.projectPoints 사용
-        lidar_points = lidar_points.reshape(-1, 1, 3)  # (N, 3) -> (N, 1, 3)
-        pixel_coords, _ = cv2.projectPoints(
-            lidar_points,
-            rotation_matrix,
-            translation_vector,
-            camera_matrix,
-            dist_coeffs
-        )
+        # 외부행렬 적용
+        camera_coords = lidar_homogeneous @ extrinsic_matrix.T  # (N, 4) x (4, 4)
 
-        return pixel_coords.reshape(-1, 2)  # (N, 1, 2) -> (N, 2)
+        # 카메라 좌표계에서 이미지 평면으로 투영
+        image_points = camera_coords[:, :3] / camera_coords[:, 2:3]  # Normalize by Z (N, 3)
+
+        # 카메라 내부행렬 적용
+        pixel_coords = (image_points @ camera_matrix.T)[:, :2]  # (N, 3) x (3, 3) -> (N, 2)
+
+        # 왜곡 보정
+        pixel_coords = cv2.undistortPoints(pixel_coords.reshape(-1, 1, 2), camera_matrix, dist_coeffs).reshape(-1, 2)
+
+        return pixel_coords
 
 
 
@@ -436,7 +417,11 @@ class CalibrationNode(Node):
 
             # 나눠진 점 계산
             divided_points = [(int(x), int(m * x + c)) for x in x_range]
-   
+
+            # 카메라 프레임으로 좌표 변환
+            lidar_window_offset = cluster_frame.shape[1]  # LiDAR 창 너비
+            transformed_points = [(x - lidar_window_offset, y) for x, y in divided_points]
+
             # 나눠진 점을 클러스터 캔버스에 시각화
             for point in divided_points:
                 x, y = point
@@ -448,7 +433,7 @@ class CalibrationNode(Node):
             cv2.line(cluster_frame, (int(x1), y_start), (int(x2), y_end), (0, 255, 255), 1)  # 노란색 선
 
             # 변환된 점을 저장
-            self.lidar_features.extend(divided_points)
+            self.lidar_features.extend(transformed_points)
 
             self.get_logger().info(f"LiDAR line divided into {len(divided_points)} points and transformed to camera frame.")
         else:

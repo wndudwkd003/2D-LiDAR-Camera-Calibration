@@ -47,3 +47,31 @@ def load_json(file_path):
         raise KeyError(f"Missing key in JSON file: {e}")
     except Exception as e:
         raise RuntimeError(f"Error loading JSON file: {e}")
+    
+
+def load_calibration_ex_json(file_path):
+    """
+    Load extrinsic matrix from a JSON file.
+
+    Args:
+        file_path (str): Path to the JSON file.
+
+    Returns:
+        SimpleNamespace: An object containing the extrinsic matrix as a numpy array.
+    """
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+
+        # Convert extrinsic matrix to numpy array
+        extrinsic_matrix = np.array(data["extrinsic_matrix"], dtype=np.float32)
+
+        # Return as SimpleNamespace
+        return SimpleNamespace(extrinsic_matrix=extrinsic_matrix)
+
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Calibration JSON file not found: {file_path}")
+    except KeyError as e:
+        raise KeyError(f"Missing key in JSON file: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Error loading JSON file: {e}")

@@ -34,6 +34,8 @@ class ClusterTracker:
         self.tracked_center = None  # 추적 중인 클러스터 중심 좌표
         self.kalman_filter = None  # 칼만 필터 객체
         self.is_tracking = False  # 추적 상태 초기화
+        self.latest_labels = None  # 최신 클러스터 라벨
+        self.latest_points = None  # 최신 클러스터 점들
 
     def initialize_kalman_filter(self, initial_position):
         """
@@ -76,13 +78,15 @@ class ClusterTracker:
 
     def update_clusters(self, labels, points):
         """
-        클러스터 중심을 업데이트합니다.
+        클러스터 중심을 업데이트하고 추적 중인 중심을 업데이트합니다.
 
         Args:
             labels (np.ndarray): 클러스터 라벨 배열.
             points (np.ndarray): 각 점의 (x, y) 좌표 배열.
         """
         self.cluster_centers = calculate_cluster_centers(labels, points)
+        self.latest_labels = labels
+        self.latest_points = points
 
         if self.is_tracking and self.tracked_center is not None:
             # 추적 중인 중심과 클러스터 중심 비교
@@ -122,6 +126,27 @@ class ClusterTracker:
             self.initialize_kalman_filter(selected_center)
 
         return selected_center
+
+    def get_tracked_cluster_points(self):
+        """
+        현재 추적 중인 클러스터에 속한 모든 점을 반환합니다.
+
+        Returns:
+            np.ndarray: 추적 중인 클러스터에 속한 점들의 배열, 없으면 None.
+        """
+        if self.tracked_center is None or self.latest_labels is None or self.latest_points is None:
+            return None
+
+        # 추적 중인 중심에 가장 가까운 클러스터의 라벨 찾기
+        distances = {
+            cluster_id: np.linalg.norm(np.array(center) - np.array(self.tracked_center))
+            for cluster_id, center in self.cluster_centers.items()
+        }
+        closest_id = min(distances, key=distances.get)
+
+        # 해당 클러스터의 모든 점 반환
+        cluster_indices = self.latest_labels == closest_id
+        return self.latest_points[cluster_indices]
 
 
 
