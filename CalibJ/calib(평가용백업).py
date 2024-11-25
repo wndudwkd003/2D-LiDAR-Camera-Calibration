@@ -22,7 +22,6 @@ from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
 from CalibJ.module.abs_distance_module import show_pixel_spectrum, filter_noise_by_histogram
 from CalibJ.evaluate.calibration_eval import calculate_reprojection_error_2d, save_reprojection_errors_to_csv
 
-from cv2 import HOGDescriptor
 
 class CalibrationNode(Node):
     def __init__(self):
@@ -31,13 +30,6 @@ class CalibrationNode(Node):
         self.get_logger().info(f"Loaded configuration: {self.config}")
 
         self.camera_params = load_json(self.config.cam_calib_result_json)
-
-
-        # OpenCV HOG 기반 사람 보행자 검출 초기화
-        self.hog = HOGDescriptor()
-        self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-
-
 
         # ROS 2 Subscribers and Publishers
         self.scan_sub = self.create_subscription(LaserScan, self.config.scan_topic, self.scan_callback, 10)
@@ -151,35 +143,12 @@ class CalibrationNode(Node):
 
         self.camera_frame = camera_frame
 
-    def calculate_average_distance_in_bbox(self, x, y, w, h):
-        """
-        Calculate the average distance of LiDAR points within the bounding box.
-
-        Args:
-            x (int): Top-left x-coordinate of the bounding box.
-            y (int): Top-left y-coordinate of the bounding box.
-            w (int): Width of the bounding box.
-            h (int): Height of the bounding box.
-
-        Returns:
-            float: Average distance of points within the bounding box, or None if no points are found.
-        """
-        distances_in_bbox = []
-
-        for (px, py), distance in zip(self.filtered_points, self.filtered_distances):
-            if x <= px <= x + w and y <= py <= y + h:
-                distances_in_bbox.append(distance)
-
-        if distances_in_bbox:
-            return np.mean(distances_in_bbox)
-        else:
-            return None
-        
     def show_visualization(self):
         """Main thread OpenCV GUI rendering."""
         if hasattr(self, 'cluster_canvas') and self.camera_frame is not None:
             try:
                 detect_frame = self.camera_frame.copy()
+
 
                 # LiDAR 데이터를 카메라 프레임에 투영
                 if hasattr(self, 'rvec') and len(self.pix_cluster_points) > 0:
@@ -203,30 +172,52 @@ class CalibrationNode(Node):
                         num_bins=self.config.num_bins
                     )
 
-                    self.filtered_points = filtered_points
-                    self.filtered_distances = filtered_distances
+                    # # 거리를 기반으로 색상 계산 및 텍스트 시각화
+                    # if self.vis_distance and len(lidar_points) > 0:
+                    #     max_distance = self.config.lidar_max_distance  
+                    #     for idx, point in enumerate(projected_points):
+                    #         try:
+                    #             x, y = map(lambda v: int(round(v)), point)
 
-                    bounding_boxes, _ = self.hog.detectMultiScale(detect_frame, winStride=(8, 8), padding=(8, 8), scale=1.05)
+                    #             # 프레임 경계 확인
+                    #             if 0 <= x < self.config.canvas_size and 0 <= y < self.config.canvas_size:
+                    #                 # 거리 기반 색상 계산 (빨간색에서 초록색으로 전환)
+                    #                 distance = min(self.distances[idx], max_distance)  # 최대 거리를 10m로 클램프
+                    #                 green_intensity = int((distance / max_distance) * 200 + 55)  # 초록색 성분 (최소 55로 밝기 확보)
+                    #                 red_intensity = int((1 - distance / max_distance) * 200 + 55)  # 빨간색 성분 (최소 55로 밝기 확보)
+                    #                 color = (0, green_intensity, red_intensity)  # BGR 형식
 
-                    # 보행자 검출된 바운딩 박스 표시
-                    for (x, y, w, h) in bounding_boxes:
-                        cv2.rectangle(detect_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    #                 # 점을 카메라 프레임 위에 그리기
+                    #                 cv2.circle(detect_frame, (x, y), 3, color, -1)
 
-                        # 평균 거리 계산
-                        average_distance = self.calculate_average_distance_in_bbox(x, y, w, h)
-                        if average_distance is not None:
-                            # 텍스트 위치: 바운딩 박스 내부 좌하단 (x, y + h - 5)
-                            text_x, text_y = x + 5, y + h - 5
-                            text = f"{average_distance:.2f} m"
-                            cv2.putText(
-                                detect_frame, 
-                                text, 
-                                (text_x, text_y), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 
-                                0.5, 
-                                (0, 0, 255),  # 빨간색
-                                2
-                            )   
+                    #         except ValueError as e:
+                    #             self.get_logger().error(f"ValueError converting point: {point} | Error: {e}")
+                    #             continue
+
+                    # 필터링된 좌표만 시각화
+                    if self.vis_distance and len(filtered_points) > 0:
+                        max_distance = self.config.lidar_max_distance
+
+                        for (x, y), distance in zip(filtered_points, filtered_distances):
+                            try:
+                                x, y = int(round(x)), int(round(y))
+
+                                # 프레임 경계 확인
+                                if 0 <= x < self.camera_frame.shape[1] and 0 <= y < self.camera_frame.shape[0]:
+                                    # 거리 기반 색상 계산 (빨간색에서 초록색으로 전환)
+                                    green_intensity = int((distance / max_distance) * 200 + 55)  # 초록색 성분 (최소 55로 밝기 확보)
+                                    red_intensity = int((1 - distance / max_distance) * 200 + 55)  # 빨간색 성분 (최소 55로 밝기 확보)
+                                    color = (0, green_intensity, red_intensity)  # BGR 형식
+
+                                    # 점을 카메라 프레임 위에 그리기
+                                    cv2.circle(detect_frame, (x, y), 3, color, -1)
+
+                            except ValueError as e:
+                                self.get_logger().error(f"ValueError converting point: {point} | Error: {e}")
+                                continue
+
+                    # for x, y in filtered_points:
+                    #     cv2.circle(detect_frame, (int(x), int(y)), 2, (0, 0, 255), -1)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # Quit

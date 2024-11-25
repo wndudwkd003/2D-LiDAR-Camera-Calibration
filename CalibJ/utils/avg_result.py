@@ -58,14 +58,9 @@ def calculate_average_reprojection_error(results_dir, csv_name, json_name):
     rvecs = np.array(rvecs)
     tvecs = np.array(tvecs)
 
-    rvec_mean = np.mean(rvecs, axis=0)
-    tvec_mean = np.mean(tvecs, axis=0)
-
     rvec_std = np.std(rvecs, axis=0)
     tvec_std = np.std(tvecs, axis=0)
 
-    rvec_percentage_deviation = (rvec_std / np.abs(rvec_mean)) * 100
-    tvec_percentage_deviation = (tvec_std / np.abs(tvec_mean)) * 100
 
     # Create result dictionary
     result = {
@@ -73,8 +68,6 @@ def calculate_average_reprojection_error(results_dir, csv_name, json_name):
         "overall_average_error": overall_average,
         "rvec_deviation": rvec_std.tolist(),
         "tvec_deviation": tvec_std.tolist(),
-        "rvec_percentage_deviation": rvec_percentage_deviation.tolist(),
-        "tvec_percentage_deviation": tvec_percentage_deviation.tolist()
     }
 
     # Save to JSON
