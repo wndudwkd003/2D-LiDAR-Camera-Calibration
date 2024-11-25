@@ -20,7 +20,9 @@ from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
 from CalibJ.module.abs_distance_module import show_pixel_spectrum, filter_noise_by_histogram
-from CalibJ.evaluate.calibration_eval import calculate_reprojection_error_2d, save_reprojection_errors_to_csv
+from torch.hub import load
+import torch.nn.functional as F
+import torch
 
 
 class CalibrationNode(Node):
@@ -31,6 +33,24 @@ class CalibrationNode(Node):
 
         self.camera_params = load_json(self.config.cam_calib_result_json)
 
+        # MiDaS 모델 초기화
+        model_type = "MiDaS_small"  # 가장 빠른 모델
+        self.midas = load("intel-isl/MiDaS", model_type)
+        self.midas.eval()
+        self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        self.midas.to(self.device)
+
+
+        # MiDaS 변환 초기화
+        midas_transforms = load("intel-isl/MiDaS", "transforms")
+        self.midas_transform = midas_transforms.small_transform
+
+        # MiDaS 결과 창 설정
+        cv2.namedWindow("MiDaS Depth")
+        cv2.setMouseCallback("MiDaS Depth", self.on_depth_click)
+        self.midas_output = None
+
+        
         # ROS 2 Subscribers and Publishers
         self.scan_sub = self.create_subscription(LaserScan, self.config.scan_topic, self.scan_callback, 10)
         self.cluster_pub = self.create_publisher(PointCloud2, self.config.cluster_topic, 10)
@@ -150,6 +170,25 @@ class CalibrationNode(Node):
                 detect_frame = self.camera_frame.copy()
 
 
+                # MiDaS 모델을 사용하여 깊이 추론
+                input_tensor = self.midas_transform(detect_frame).to(self.device)
+                with torch.no_grad():
+                    depth_prediction = self.midas(input_tensor)
+                    depth_prediction = F.interpolate(
+                        depth_prediction.unsqueeze(1),
+                        size=detect_frame.shape[:2],
+                        mode="bicubic",
+                        align_corners=False,
+                    ).squeeze().cpu().numpy()
+
+                # MiDaS 결과 저장 및 시각화
+                self.midas_output = depth_prediction
+                depth_normalized = cv2.normalize(depth_prediction, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                cv2.imshow("MiDaS Depth", depth_colored)
+
+
+
                 # LiDAR 데이터를 카메라 프레임에 투영
                 if hasattr(self, 'rvec') and len(self.pix_cluster_points) > 0:
                     lidar_points = self.pix_cluster_points
@@ -263,10 +302,6 @@ class CalibrationNode(Node):
                 
                 elif key == ord('c'):  # 개수 세기용
                     self.get_logger().info(f"Key 'c' pressed: lidar_features -> {len(self.lidar_features)}, apriltag_features -> {len(self.apriltag_features)}.")
-                
-                elif key == ord('e'):  # Calculate reprojection error
-                    self.get_logger().info("Key 'e' pressed: Calculating reprojection error.")
-                    self.calculate_and_save_reprojection_error()
 
                 elif key == ord('z'):  # 캘리브레이션 진행
                     lidar_features = self.lidar_features
@@ -299,31 +334,7 @@ class CalibrationNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Failed to display combined image: {e}")
 
-    def calculate_and_save_reprojection_error(self):
-        """
-        Calculate reprojection error and save to a CSV file.
-        """
-        if hasattr(self, 'rvec') and hasattr(self, 'tvec') and self.lidar_features and self.apriltag_features:
-            try:
-                # Calculate reprojection errors
-                reprojection_errors = calculate_reprojection_error_2d(
-                    self.camera_params.camera_matrix,
-                    self.camera_params.dist_coeffs,
-                    self.rvec,
-                    self.tvec,
-                    self.apriltag_features,
-                    self.lidar_features
-                )
-
-                # Save errors to CSV
-                csv_path = os.path.join(self.config.result_path, 'reprojection_errors.csv')
-                save_reprojection_errors_to_csv(reprojection_errors, csv_path)
-
-                self.get_logger().info(f"Reprojection errors calculated and saved to {csv_path}")
-
-            except Exception as e:
-                self.get_logger().error(f"Failed to calculate reprojection errors: {e}")
-
+    
 
     def on_mouse_click(self, event, x, y, flags, param):
         """Handle mouse click events."""

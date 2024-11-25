@@ -10,7 +10,7 @@ cluster_type: dbscan
 cluster_topic: /clusters
 cluster_frame: laser
 max_distance: 6 # 라이다는 그 이상 볼 수 있지만 시각화는 이것 까지만 하겠다는 것
-epsilon: 0.095 # 0.036
+epsilon: 0.065 # 0.036
 min_samples: 4 # 4
 
 result_path: /home/f1tenth/kjy_ws/src/CalibJ/CalibJ/results

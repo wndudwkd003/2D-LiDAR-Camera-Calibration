@@ -20,7 +20,7 @@ from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
 from CalibJ.module.abs_distance_module import show_pixel_spectrum, filter_noise_by_histogram
-from CalibJ.evaluate.calibration_eval import calculate_reprojection_error_2d, save_reprojection_errors_to_csv
+
 
 
 class CalibrationNode(Node):
@@ -263,10 +263,6 @@ class CalibrationNode(Node):
                 
                 elif key == ord('c'):  # 개수 세기용
                     self.get_logger().info(f"Key 'c' pressed: lidar_features -> {len(self.lidar_features)}, apriltag_features -> {len(self.apriltag_features)}.")
-                
-                elif key == ord('e'):  # Calculate reprojection error
-                    self.get_logger().info("Key 'e' pressed: Calculating reprojection error.")
-                    self.calculate_and_save_reprojection_error()
 
                 elif key == ord('z'):  # 캘리브레이션 진행
                     lidar_features = self.lidar_features
@@ -299,31 +295,7 @@ class CalibrationNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Failed to display combined image: {e}")
 
-    def calculate_and_save_reprojection_error(self):
-        """
-        Calculate reprojection error and save to a CSV file.
-        """
-        if hasattr(self, 'rvec') and hasattr(self, 'tvec') and self.lidar_features and self.apriltag_features:
-            try:
-                # Calculate reprojection errors
-                reprojection_errors = calculate_reprojection_error_2d(
-                    self.camera_params.camera_matrix,
-                    self.camera_params.dist_coeffs,
-                    self.rvec,
-                    self.tvec,
-                    self.apriltag_features,
-                    self.lidar_features
-                )
-
-                # Save errors to CSV
-                csv_path = os.path.join(self.config.result_path, 'reprojection_errors.csv')
-                save_reprojection_errors_to_csv(reprojection_errors, csv_path)
-
-                self.get_logger().info(f"Reprojection errors calculated and saved to {csv_path}")
-
-            except Exception as e:
-                self.get_logger().error(f"Failed to calculate reprojection errors: {e}")
-
+    
 
     def on_mouse_click(self, event, x, y, flags, param):
         """Handle mouse click events."""
