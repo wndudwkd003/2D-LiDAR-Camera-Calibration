@@ -1,100 +1,124 @@
-#######
-# KJY #
-#######
-
 import rclpy
 from rclpy.node import Node
 import cv2
 import numpy as np
 import json
+
+from threading import Thread, Lock
+import os
 from sensor_msgs.msg import LaserScan
-from CalibJ.utils.config_loader import load_config, load_json, load_calibration_ex_json
+from CalibJ.utils.config_loader import load_config, load_json
+from CalibJ.module.calibration_module import project_lidar_to_image
+from CalibJ.module.clustering_scan import dbscan_clustering
 
 class VisualizationNode(Node):
     def __init__(self):
-        super().__init__('viscam_node')
-        self.get_logger().info("Visualization Node Initialized.")
-
+        super().__init__('visualization_node')
         self.config = load_config()
         self.get_logger().info(f"Loaded configuration: {self.config}")
 
+        # Load calibration parameters
         self.camera_params = load_json(self.config.cam_calib_result_json)
-        self.ex_params = load_calibration_ex_json(self.config.ex_calib_result_json)
+        self.extrinsic_params = self.load_extrinsic_from_json(self.config.result_path)
+        self.get_logger().info("Loaded extrinsic parameters.")
 
-        # Parse calibration data
-        self.camera_matrix = self.camera_params.camera_matrix
-        self.dist_coeffs = self.camera_params.dist_coeffs
-        self.extrinsic_matrix = self.ex_params.extrinsic_matrix
-
-        # Camera initialization
-        self.capture = cv2.VideoCapture(self.config.camera_number)  # Default camera device
+        # Camera setup
+        self.capture = cv2.VideoCapture(self.config.camera_number)
         if not self.capture.isOpened():
-            self.get_logger().error("Failed to open camera. Exiting...")
-            rclpy.shutdown()
+            self.get_logger().error("Failed to open the camera!")
+            raise RuntimeError("Camera initialization failed")
 
-        # LiDAR data
-        self.lidar_points = []
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        # ROS 2 Subscriber for LiDAR
+        self.scan_sub = self.create_subscription(LaserScan, self.config.scan_topic, self.lidar_callback, 10)
 
-        # Timer for processing and visualization
-        self.timer = self.create_timer(0.1, self.visualize)
+        # Data storage
+        self.latest_scan = None
+        self.scan_lock = Lock()
 
+        # ROS 2 Timer for visualization loop
+        self.create_timer(0.1, self.visualization_loop)
 
-    def scan_callback(self, msg):
-        """Callback for processing LiDAR scan data."""
-        self.lidar_points = self.convert_scan_to_points(msg)
+    def load_extrinsic_from_json(self, result_path):
+        """Load extrinsic parameters from JSON."""
+        extrinsic_file = os.path.join(result_path, "calibration_extrinsic.json")
+        if not os.path.exists(extrinsic_file):
+            self.get_logger().error(f"Extrinsic file not found: {extrinsic_file}")
+            raise FileNotFoundError(f"Extrinsic file not found: {extrinsic_file}")
 
-    def convert_scan_to_points(self, scan):
-        """Convert LaserScan data to 2D points."""
-        angles = np.linspace(scan.angle_min, scan.angle_max, len(scan.ranges))
-        points = [
-            (r * np.cos(angle), r * np.sin(angle))
-            for r, angle in zip(scan.ranges, angles) if not np.isinf(r)
-        ]
-        return np.array(points, dtype=np.float32)
+        with open(extrinsic_file, 'r') as f:
+            data = json.load(f)
 
-    def project_lidar_to_image(self, lidar_points):
-        """Project LiDAR points to the camera frame."""
-        if lidar_points.shape[1] == 2:
-            lidar_points = np.hstack((lidar_points, np.zeros((lidar_points.shape[0], 1))))  # Z = 0 추가
+        rvec = np.array(data["rvec"], dtype=np.float32)
+        tvec = np.array(data["tvec"], dtype=np.float32)
+        return {"rvec": rvec, "tvec": tvec}
 
-        # Homogeneous transformation
-        lidar_homogeneous = np.hstack((lidar_points, np.ones((lidar_points.shape[0], 1))))
-        camera_coords = lidar_homogeneous @ self.extrinsic_matrix.T  # Apply extrinsic matrix
+    def lidar_callback(self, msg):
+        """Callback to process incoming LiDAR scan data."""
+        with self.scan_lock:
+            self.latest_scan = msg
 
-        # Normalize to image plane
-        image_points = camera_coords[:, :3] / camera_coords[:, 2:3]
-        pixel_coords = (image_points @ self.camera_matrix.T)[:, :2]
+    def process_lidar_data(self):
+        """Process LiDAR scan data and convert to 3D points."""
+        with self.scan_lock:
+            if self.latest_scan is None:
+                return None
 
-        # Undistort points
-        pixel_coords = cv2.undistortPoints(
-            pixel_coords.reshape(-1, 1, 2), self.camera_matrix, self.dist_coeffs
-        ).reshape(-1, 2)
-        return pixel_coords
+            scan_data = self.latest_scan
+            angles = np.linspace(scan_data.angle_min, scan_data.angle_max, len(scan_data.ranges))
+            ranges = np.array(scan_data.ranges)
 
-    def visualize(self):
-        """Capture camera frame and visualize LiDAR data."""
+            # Filter invalid range values
+            valid = (ranges > scan_data.range_min) & (ranges < scan_data.range_max)
+            angles = angles[valid]
+            ranges = ranges[valid]
+
+            # Convert polar to Cartesian coordinates
+            x = ranges * np.cos(angles)
+            y = ranges * np.sin(angles)
+            z = np.zeros_like(x)  # 2D LiDAR data (Z=0)
+
+            points = np.vstack((x, y, z)).T
+            return points
+
+    def visualization_loop(self):
+        """Main visualization loop."""
         ret, frame = self.capture.read()
         if not ret:
-            self.get_logger().error("Failed to capture frame from camera.")
+            self.get_logger().error("Failed to capture frame from the camera!")
             return
 
-        # Project LiDAR points onto the camera frame
-        if len(self.lidar_points) > 0:
-            projected_points = self.project_lidar_to_image(self.lidar_points)
-            for point in projected_points:
-                x, y = int(point[0]), int(point[1])
+        lidar_points = self.process_lidar_data()
+        if lidar_points is None:
+            return
+
+        # Project LiDAR points to the camera frame
+        rvec = self.extrinsic_params["rvec"]
+        tvec = self.extrinsic_params["tvec"]
+        projected_points = project_lidar_to_image(
+            lidar_points,
+            self.camera_params.camera_matrix,
+            self.camera_params.dist_coeffs,
+            rvec,
+            tvec
+        )
+
+        # Visualize the projected points
+        for point in projected_points:
+            try:
+                x, y = map(lambda v: int(round(v)), point)
                 if 0 <= x < frame.shape[1] and 0 <= y < frame.shape[0]:
-                    cv2.circle(frame, (x, y), 3, (0, 255, 0), -1)  # Draw green points
+                    cv2.circle(frame, (x, y), 3, (0, 255, 0), -1)  # Green dot
+            except ValueError as e:
+                self.get_logger().error(f"Failed to draw point {point}: {e}")
 
         # Display the frame
-        cv2.imshow("Camera with LiDAR", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):  # Exit on 'q' key
-            self.destroy_node()
+        cv2.imshow("Visualization", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            self.get_logger().info("Shutting down visualization.")
             rclpy.shutdown()
 
     def destroy_node(self):
-        """Cleanup resources on shutdown."""
+        """Cleanup resources."""
         self.capture.release()
         cv2.destroyAllWindows()
         super().destroy_node()

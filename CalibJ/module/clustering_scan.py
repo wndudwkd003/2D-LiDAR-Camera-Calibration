@@ -16,7 +16,9 @@ def polar_to_cartesian(scan_data):
         scan_data (LaserScan): ROS2 LaserScan 메시지.
 
     Returns:
-        np.ndarray: 변환된 (x, y) 좌표 배열, 크기 (N, 2)
+        tuple:
+            - np.ndarray: 변환된 (x, y) 좌표 배열, 크기 (N, 2)
+            - np.ndarray: 변환된 점들의 실제 거리 (ranges)
     """
     num_ranges = len(scan_data.ranges)
     angles = np.arange(scan_data.angle_min, scan_data.angle_max, scan_data.angle_increment)
@@ -39,7 +41,8 @@ def polar_to_cartesian(scan_data):
     rotation_matrix = np.array([[0, -1], [1, 0]])  # 90도 회전 행렬
     rotated_points = points @ rotation_matrix.T  # 행렬 곱으로 회전 적용
 
-    return rotated_points
+    return rotated_points, ranges
+
 
 
 # from sklearn.cluster import MeanShift
@@ -128,7 +131,7 @@ def dbscan_clustering(scan_data, epsilon=12, min_samples=5):
         cluster_points (np.ndarray): 유효 데이터의 클러스터링된 좌표.
         execution_time (float): 클러스터링 수행 시간.
     """
-    points = polar_to_cartesian(scan_data)  # LaserScan 데이터를 데카르트 좌표로 변환
+    points, distances = polar_to_cartesian(scan_data)  # LaserScan 데이터를 데카르트 좌표로 변환
 
     # DBSCAN 클러스터링 실행 및 시간 측정
     start_time = time.time()
@@ -136,7 +139,7 @@ def dbscan_clustering(scan_data, epsilon=12, min_samples=5):
     labels = dbscan.fit_predict(points)
     execution_time = time.time() - start_time
 
-    return labels, points, execution_time
+    return labels, points, distances, execution_time
 
 
 def record_execution_time(algorithm_name, execution_time, execution_times):

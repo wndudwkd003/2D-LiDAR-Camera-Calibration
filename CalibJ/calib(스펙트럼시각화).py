@@ -19,7 +19,7 @@ from CalibJ.module.calibration_module import calibration_2dlidar_camera, process
 from CalibJ.module.apriltag_detect import detect_apriltag
 from CalibJ.evaluate.clustering_eval import evaluate_clustering, record_evaluation_result 
 from CalibJ.module.tracking import calculate_cluster_centers, ClusterTracker
-from CalibJ.module.abs_distance_module import show_pixel_spectrum, filter_noise_by_histogram
+from CalibJ.module.abs_distance_module import show_pixel_spectrum
 
 class CalibrationNode(Node):
     def __init__(self):
@@ -161,48 +161,22 @@ class CalibrationNode(Node):
                         self.tvec
                     )
 
-                    # 노이즈 필터링
-                    filtered_points, filtered_distances = filter_noise_by_histogram(
-                        projected_points, 
-                        self.distances,
-                        frame_height=self.camera_frame.shape[0],
-                        min_frequency=self.config.min_frequency,
-                        num_bins=self.config.num_bins
-                    )
+                    # 유효한 투영된 포인트를 기준으로 스펙트럼 시각화
+                    if self.vis_distance and len(lidar_points) > 0:
+                        show_pixel_spectrum(self, projected_points, self.camera_frame.shape[1], self.camera_frame.shape[0])
 
-                    # # 거리를 기반으로 색상 계산 및 텍스트 시각화
-                    # if self.vis_distance and len(lidar_points) > 0:
-                    #     max_distance = self.config.lidar_max_distance  
-                    #     for idx, point in enumerate(projected_points):
-                    #         try:
-                    #             x, y = map(lambda v: int(round(v)), point)
 
-                    #             # 프레임 경계 확인
-                    #             if 0 <= x < self.config.canvas_size and 0 <= y < self.config.canvas_size:
-                    #                 # 거리 기반 색상 계산 (빨간색에서 초록색으로 전환)
-                    #                 distance = min(self.distances[idx], max_distance)  # 최대 거리를 10m로 클램프
-                    #                 green_intensity = int((distance / max_distance) * 200 + 55)  # 초록색 성분 (최소 55로 밝기 확보)
-                    #                 red_intensity = int((1 - distance / max_distance) * 200 + 55)  # 빨간색 성분 (최소 55로 밝기 확보)
-                    #                 color = (0, green_intensity, red_intensity)  # BGR 형식
-
-                    #                 # 점을 카메라 프레임 위에 그리기
-                    #                 cv2.circle(detect_frame, (x, y), 3, color, -1)
-
-                    #         except ValueError as e:
-                    #             self.get_logger().error(f"ValueError converting point: {point} | Error: {e}")
-                    #             continue
-
-                    # 필터링된 좌표만 시각화
-                    if self.vis_distance and len(filtered_points) > 0:
-                        max_distance = self.config.lidar_max_distance
-
-                        for (x, y), distance in zip(filtered_points, filtered_distances):
+                    # 거리를 기반으로 색상 계산 및 텍스트 시각화
+                    if self.vis_distance and len(lidar_points) > 0:
+                        max_distance = self.config.lidar_max_distance  
+                        for idx, point in enumerate(projected_points):
                             try:
-                                x, y = int(round(x)), int(round(y))
+                                x, y = map(lambda v: int(round(v)), point)
 
                                 # 프레임 경계 확인
-                                if 0 <= x < self.camera_frame.shape[1] and 0 <= y < self.camera_frame.shape[0]:
+                                if 0 <= x < self.config.canvas_size and 0 <= y < self.config.canvas_size:
                                     # 거리 기반 색상 계산 (빨간색에서 초록색으로 전환)
+                                    distance = min(self.distances[idx], max_distance)  # 최대 거리를 10m로 클램프
                                     green_intensity = int((distance / max_distance) * 200 + 55)  # 초록색 성분 (최소 55로 밝기 확보)
                                     red_intensity = int((1 - distance / max_distance) * 200 + 55)  # 빨간색 성분 (최소 55로 밝기 확보)
                                     color = (0, green_intensity, red_intensity)  # BGR 형식
@@ -213,9 +187,6 @@ class CalibrationNode(Node):
                             except ValueError as e:
                                 self.get_logger().error(f"ValueError converting point: {point} | Error: {e}")
                                 continue
-
-                    # for x, y in filtered_points:
-                    #     cv2.circle(detect_frame, (int(x), int(y)), 2, (0, 0, 255), -1)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # Quit

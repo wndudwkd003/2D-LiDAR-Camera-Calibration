@@ -49,29 +49,52 @@ def load_json(file_path):
         raise RuntimeError(f"Error loading JSON file: {e}")
     
 
-def load_calibration_ex_json(file_path):
+
+
+def save_extrinsic_to_json(result_path, rvec, tvec):
+    """
+    Save extrinsic matrix to a JSON file.
+
+    Args:
+        extrinsic (np.ndarray): The 4x4 extrinsic matrix.
+    """
+
+    
+    os.makedirs(result_path, exist_ok=True)
+    result_path = os.path.join(result_path, "calibration_extrinsic.json")
+
+    print("result_path: ", result_path)
+
+    extrinsic_data = {
+        "rvec": rvec.tolist(),
+        "tvec": tvec.tolist()
+    }
+
+    with open(result_path, 'w') as f:
+        json.dump(extrinsic_data, f, indent=4)
+
+    print(f"Extrinsic matrix saved to {result_path}")
+
+
+
+def load_extrinsic_from_json(json_path):
     """
     Load extrinsic matrix from a JSON file.
 
     Args:
-        file_path (str): Path to the JSON file.
+        json_path (str): Path to the JSON file.
 
     Returns:
-        SimpleNamespace: An object containing the extrinsic matrix as a numpy array.
+        tuple: rvec (np.ndarray), tvec (np.ndarray)
     """
-    try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"JSON file not found at {json_path}")
 
-        # Convert extrinsic matrix to numpy array
-        extrinsic_matrix = np.array(data["extrinsic_matrix"], dtype=np.float32)
+    with open(json_path, 'r') as f:
+        extrinsic_data = json.load(f)
 
-        # Return as SimpleNamespace
-        return SimpleNamespace(extrinsic_matrix=extrinsic_matrix)
+    # Convert rvec and tvec back to numpy arrays
+    rvec = np.array(extrinsic_data["rvec"])
+    tvec = np.array(extrinsic_data["tvec"])
 
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Calibration JSON file not found: {file_path}")
-    except KeyError as e:
-        raise KeyError(f"Missing key in JSON file: {e}")
-    except Exception as e:
-        raise RuntimeError(f"Error loading JSON file: {e}")
+    return rvec, tvec
