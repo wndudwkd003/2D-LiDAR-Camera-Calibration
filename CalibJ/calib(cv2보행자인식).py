@@ -24,8 +24,6 @@ from CalibJ.evaluate.calibration_eval import calculate_reprojection_error_2d, sa
 
 from cv2 import HOGDescriptor
 
-from std_msgs.msg import Bool, Float32
-
 class CalibrationNode(Node):
     def __init__(self):
         super().__init__('calibration_node')
@@ -39,9 +37,6 @@ class CalibrationNode(Node):
         self.hog = HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-
-        self.pedd_detect_pub = self.create_publisher(Bool, '/pedd/detect', 10)
-        self.pedd_distance_pub = self.create_publisher(Float32, '/pedd/distance', 10)
 
 
         # ROS 2 Subscribers and Publishers
@@ -213,9 +208,6 @@ class CalibrationNode(Node):
 
                     bounding_boxes, _ = self.hog.detectMultiScale(detect_frame, winStride=(8, 8), padding=(8, 8), scale=1.05)
 
-                    detect_status = False
-                    average_distance = None
-
                     # 보행자 검출된 바운딩 박스 표시
                     for (x, y, w, h) in bounding_boxes:
                         cv2.rectangle(detect_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -235,17 +227,6 @@ class CalibrationNode(Node):
                                 (0, 0, 255),  # 빨간색
                                 2
                             )   
-
-                        detect_status = True
-
-                    # 보행자 검출 결과 및 거리 퍼블리시
-                    self.pedd_detect_pub.publish(Bool(data=detect_status))
-                    if detect_status and average_distance is not None:
-                        average_distance = float(average_distance)
-                        self.pedd_distance_pub.publish(Float32(data=average_distance))
-                    else:
-                        self.pedd_distance_pub.publish(Float32(data=-1.0))
-
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # Quit
